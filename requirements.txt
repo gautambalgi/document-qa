@@ -5,3 +5,5 @@ beautifulsoup4
 anthropic
 cohere
 mistralai>=1.0.0
+tiktoken
+
