@@ -1,9 +1,8 @@
 streamlit
-openai
 requests
 beautifulsoup4
-anthropic
-cohere
-mistralai>=1.0.0
 tiktoken
-
+openai
+anthropic
+google-generativeai
+python-dotenv
