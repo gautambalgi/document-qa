@@ -18,18 +18,19 @@ st.write(
     Use the sidebar (☰ in the top-left) to navigate to:
     - 📄 HW1 — Document Q&A  
     - 📑 HW2 — URL Summarizer  
-    - 💬 Lab3 — Streaming Chatbot
+    - 💬 Lab3 — Streaming Chatbot  
+    - 🧠 HW3 — Multi-Doc Chatbot
     """
 )
 
 st.divider()
 
-# Optional section with direct page links (if your Streamlit version supports st.page_link)
+# Direct page links
 st.subheader("Open a Homework or Lab")
 
 st.page_link("pages/HW1.py", label="📄 HW1 — Document Q&A", icon="📄")
 st.page_link("pages/HW2.py", label="📑 HW2 — URL Summarizer", icon="📑")
-st.page_link("Labs/Lab3.py", label="💬 Lab3 — Chatbot", icon="💬")
+st.page_link("pages/Lab3.py", label="💬 Lab3 — Chatbot", icon="💬")
+st.page_link("pages/HW3.py", label="🧠 HW3 — Multi-Doc Chatbot", icon="🧠")
 
 st.divider()
-
