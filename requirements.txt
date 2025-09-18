@@ -8,3 +8,5 @@ beautifulsoup4
 chromadb
 pymupdf
 pysqlite3-binary
+cohere
+mistralai
