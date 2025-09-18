@@ -1,53 +1,38 @@
 import streamlit as st
-from openai import OpenAI
 
-# Show title and description.
-st.title("📄 Gautam's Document Bot")
-st.write(
-    "Upload a document below and ask a question about it – GPT will answer! "
-    "To use this app, you need to provide an OpenAI API key, which you can get [here](https://platform.openai.com/account/api-keys). "
+# Page setup
+st.set_page_config(
+    page_title="Gautam's Homework Manager",
+    page_icon="📚",
+    layout="centered",
+    initial_sidebar_state="expanded"
 )
 
-# Ask user for their OpenAI API key via `st.text_input`.
-# Alternatively, you can store the API key in `./.streamlit/secrets.toml` and access it
-# via `st.secrets`, see https://docs.streamlit.io/develop/concepts/connections/secrets-management
-openai_api_key = st.text_input("OpenAI API Key", type="password")
-if not openai_api_key:
-    st.info("Please add your OpenAI API key to continue.", icon="🗝️")
-else:
+# Title
+st.title("📚 Gautam's Homework Manager")
 
-    # Create an OpenAI client.
-    client = OpenAI(api_key=openai_api_key)
+# Welcome text
+st.write(
+    """
+    Welcome! This is the landing page.  
+    Use the sidebar (☰ in the top-left) to navigate to:
+    - 📄 HW1 — Document Q&A  
+    - 📑 HW2 — URL Summarizer  
+    - 💬 Lab3 — Streaming Chatbot  
+    - 🧠 HW3 — Multi-Doc Chatbot  
+    - 📚 Lab4 — Vector DB Setup  
+    """
+)
 
-    # Let the user upload a file via `st.file_uploader`.
-    uploaded_file = st.file_uploader(
-        "Upload a document (.txt or .md)", type=("txt", "md")
-    )
+st.divider()
 
-    # Ask the user for a question via `st.text_area`.
-    question = st.text_area(
-        "Now ask a question about the document!",
-        placeholder="Can you give me a short summary?",
-        disabled=not uploaded_file,
-    )
+# Direct page links
+st.subheader("Open a Homework or Lab")
 
-    if uploaded_file and question:
+st.page_link("pages/HW1.py", label="📄 HW1 — Document Q&A", icon="📄")
+st.page_link("pages/HW2.py", label="📑 HW2 — URL Summarizer", icon="📑")
+st.page_link("pages/Lab3.py", label="💬 Lab3 — Chatbot", icon="💬")
+st.page_link("pages/HW3.py", label="🧠 HW3 — Multi-Doc Chatbot", icon="🧠")
+st.page_link("pages/Lab4.py", label="📚 Lab4 — Vector DB Setup", icon="📚")  # ✅ Added Lab 4
 
-        # Process the uploaded file and question.
-        document = uploaded_file.read().decode()
-        messages = [
-            {
-                "role": "user",
-                "content": f"Here's a document: {document} \n\n---\n\n {question}",
-            }
-        ]
-
-        # Generate an answer using the OpenAI API.
-        stream = client.chat.completions.create(
-            model="gpt-5-chat-latest",
-            messages=messages,
-            stream=True,
-        )
-
-        # Stream the response to the app using `st.write_stream`.
-        st.write_stream(stream)
+st.divider()
