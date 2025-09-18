@@ -1,4 +1,5 @@
 streamlit
+<<<<<<< HEAD
 openai
 anthropic
 google-generativeai
@@ -10,3 +11,12 @@ pymupdf
 pysqlite3-binary
 cohere
 mistralai
+=======
+requests
+beautifulsoup4
+tiktoken
+openai
+anthropic
+google-generativeai
+python-dotenv
+>>>>>>> 8780780ce36f7651f44a63b5db586fd6955012ad
