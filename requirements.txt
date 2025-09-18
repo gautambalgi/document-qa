@@ -1,22 +1,10 @@
 streamlit
-<<<<<<< HEAD
 openai
 anthropic
 google-generativeai
-tiktoken
-requests
-beautifulsoup4
-chromadb
-pymupdf
-pysqlite3-binary
 cohere
 mistralai
-=======
-requests
 beautifulsoup4
 tiktoken
-openai
-anthropic
-google-generativeai
+requests
 python-dotenv
->>>>>>> 8780780ce36f7651f44a63b5db586fd6955012ad
