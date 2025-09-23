@@ -1,246 +1,220 @@
-# HW4.py — iSchool Student Organizations Chatbot (RAG) with Multiple AI Providers
-
-import sys
-
-# --- Fix sqlite for Chroma on Streamlit Cloud ---
-try:
-    import pysqlite3  # type: ignore
-    sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
-except ImportError:
-    pass
-
-import os, re, time
 import streamlit as st
-import chromadb
-from chromadb.utils import embedding_functions
+import os
+import sys
 from bs4 import BeautifulSoup
 from openai import OpenAI
-import anthropic
 import google.generativeai as genai
+from anthropic import Anthropic
 
-# ==============================
-# App Config
-# ==============================
-st.set_page_config(
-    page_title="HW4 — iSchool Orgs Chatbot (RAG)",
-    page_icon="🎓",
-    layout="centered",
-    initial_sidebar_state="expanded",
-)
-st.title("🎓 HW4 — iSchool Student Orgs Chatbot (RAG)")
+# ==============================================================================
+# 1. INITIALIZATION AND ENVIRONMENT FIXES
+# ==============================================================================
 
-# ==============================
-# Sidebar Settings
-# ==============================
-st.sidebar.header("⚙️ Settings")
+# This workaround forces Python to use a newer, compatible version of SQLite3
+# required by ChromaDB. It MUST be placed before the chromadb import.
+try:
+    __import__('pysqlite3')
+    sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+except ImportError:
+    st.warning("pysqlite3 not found. ChromaDB might face issues if the system's sqlite3 is outdated.")
 
-PROVIDERS = {
-    "OpenAI": ["gpt-4o-mini", "gpt-4o", "gpt-4.1"],
-    "Gemini": ["gemini-2.0-flash", "gemini-2.0-pro", "gemini-2.0-flash-thinking-exp-01-21"],
-    "Claude": ["claude-3-haiku-20240307", "claude-3-sonnet-20240229", "claude-3-opus-20240229"],
+import chromadb
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+
+# ==============================================================================
+# 2. CONSTANTS AND CONFIGURATION
+# ==============================================================================
+
+CHROMA_DB_PATH = "./ChromaDB_RAG"
+SOURCE_DIR = "su_orgs"
+CHROMA_COLLECTION_NAME = "MultiDocCollection"
+
+# NEW: Nested dictionary to hold model options for each provider
+MODEL_OPTIONS = {
+    "OpenAI": ["gpt-5-nano", "gpt-5-chat-latest", "gpt-5-mini"],
+    "Google": ["gemini-2.5-pro", "gemini-2.5-flash-lite", "gemini-2.5-flash"],
+    "Anthropic": [ "claude-sonnet-4-20250514", "claude-3-haiku-20240307"]
 }
 
-provider = st.sidebar.selectbox("Choose AI provider", list(PROVIDERS.keys()))
-model_version = st.sidebar.selectbox("Choose model version", PROVIDERS[provider])
+# ==============================================================================
+# 3. CACHED RESOURCES (EFFICIENT INITIALIZATION)
+# ==============================================================================
 
-show_retrieval = st.sidebar.checkbox("Show retrieved context", value=False)
-
-st.sidebar.markdown(
-    """
-**Note**: API keys must be set in `.streamlit/secrets.toml`:  
-- `OPENAI_API_KEY`  
-- `ANTHROPIC_API_KEY`  
-- `GOOGLE_API_KEY`
-"""
-)
-
-# ==============================
-# Helpers
-# ==============================
-def read_html_as_text(path: str) -> str:
-    """Extract visible text from HTML file."""
+@st.cache_resource
+def get_api_clients():
+    """Initializes and returns all API clients in a dictionary."""
     try:
-        with open(path, "r", encoding="utf-8") as f:
-            soup = BeautifulSoup(f, "html.parser")
-            for tag in soup(["script", "style", "noscript"]):
-                tag.extract()
-            text = soup.get_text(separator="\n")
-    except Exception:
-        with open(path, "r", encoding="utf-8", errors="ignore") as f:
-            raw = f.read()
-            text = re.sub(r"<[^>]+>", " ", raw)
-    text = re.sub(r"[ \t]+", " ", text)
-    text = re.sub(r"\n\s*\n+", "\n\n", text)
-    return text.strip()
-
-def chunk_text(text: str, max_chars=1200, overlap=200):
-    """Split text into overlapping chunks for better retrieval."""
-    chunks = []
-    start = 0
-    while start < len(text):
-        end = min(len(text), start + max_chars)
-        chunk = text[start:end].strip()
-        if chunk:
-            chunks.append(chunk)
-        start += max_chars - overlap
-    return chunks if chunks else [text]
-
-def setup_vector_db(html_folder="su_orgs", persist_dir=".chroma_hw4"):
-    """Load or build vector DB from HTMLs."""
-    if "HW4_vector_collection" in st.session_state:
-        return st.session_state.HW4_vector_collection
-
-    client = chromadb.PersistentClient(path=persist_dir)
-    ef = embedding_functions.OpenAIEmbeddingFunction(
-        api_key=st.secrets["OPENAI_API_KEY"],
-        model_name="text-embedding-3-small"
-    )
-
-    collection = client.get_or_create_collection(
-        name="HW4_iSchool_Orgs",
-        embedding_function=ef,
-    )
-
-    if collection.count() == 0:
-        if not os.path.exists(html_folder):
-            st.error(f"Folder `{html_folder}` not found.")
-            st.stop()
-
-        html_files = sorted([f for f in os.listdir(html_folder) if f.lower().endswith(".html")])
-        if not html_files:
-            st.error(f"No HTML files found in `{html_folder}`.")
-            st.stop()
-
-        for fname in html_files:
-            path = os.path.join(html_folder, fname)
-            try:
-                raw_text = read_html_as_text(path)
-                chunks = chunk_text(raw_text)
-                ids = [f"{fname}::{i}" for i in range(len(chunks))]
-                metas = [{"filename": fname, "chunk": i} for i in range(len(chunks))]
-                collection.add(ids=ids, documents=chunks, metadatas=metas)
-                time.sleep(0.01)
-            except Exception as e:
-                print(f"Skipping {fname}: {e}")
-
-    st.session_state.HW4_vector_collection = collection
-    return collection
-
-def trim_memory(messages, max_turns=5):
-    cap = max_turns * 2
-    if len(messages) > cap:
-        return messages[-cap:]
-    return messages
-
-def build_messages(system_prompt, history, user_q, retrieved_text):
-    msgs = [{"role": "system", "content": system_prompt}]
-    msgs.extend(history)
-    user_block = (
-        f"Question:\n{user_q}\n\n"
-        "Retrieved context (from iSchool org HTML documents):\n"
-        f"{retrieved_text if retrieved_text.strip() else '[No relevant context found]'}"
-    )
-    msgs.append({"role": "user", "content": user_block})
-    return msgs
-
-def call_model(provider, model, messages):
-    """Dispatch to correct provider."""
-    if provider == "OpenAI":
-        client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
-        resp = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            temperature=0.2,
-            max_tokens=500,
-        )
-        return resp.choices[0].message.content
-
-    elif provider == "Claude":
-        client = anthropic.Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
-        content = "\n".join([f"{m['role']}: {m['content']}" for m in messages])
-        resp = client.messages.create(
-            model=model,
-            max_tokens=500,
-            messages=[{"role": "user", "content": content}],
-        )
-        return resp.content[0].text
-
-    elif provider == "Gemini":
+        # UPDATED: For Google, we just need the configured module to be flexible
         genai.configure(api_key=st.secrets["GOOGLE_API_KEY"])
-        model_obj = genai.GenerativeModel(model)
-        content = "\n".join([f"{m['role']}: {m['content']}" for m in messages])
-        resp = model_obj.generate_content(content)
-        return resp.text
-
-    else:
-        return "Provider not supported."
-
-# ==============================
-# Init
-# ==============================
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-
-collection = setup_vector_db("su_orgs", ".chroma_hw4")
-
-# ==============================
-# Chat UI
-# ==============================
-for msg in st.session_state.messages:
-    with st.chat_message(msg["role"]):
-        st.markdown(msg["content"])
-
-user_q = st.chat_input("Ask about iSchool student organizations…")
-
-if user_q:
-    # Save and show user message immediately
-    st.session_state.messages.append({"role": "user", "content": user_q})
-    with st.chat_message("user"):
-        st.markdown(user_q)
-
-    try:
-        if collection.count() == 0:
-            st.error("Vector DB is empty. Please check your su_orgs folder.")
-            retrieved_text = ""
-        else:
-            results = collection.query(query_texts=[user_q], n_results=5)
-            retrieved = results.get("documents", [[]])[0] if results else []
-            retrieved_text = "\n\n---\n".join(retrieved) if retrieved else ""
+        clients = {
+            "OpenAI": OpenAI(api_key=st.secrets["OPENAI_API_KEY"]),
+            "Google": genai,
+            "Anthropic": Anthropic(api_key=st.secrets["ANTHROPIC_API_KEY"])
+        }
+        return clients
     except Exception as e:
-        st.warning(f"Vector DB query failed: {e}")
-        retrieved_text = ""
+        st.error(f"Failed to initialize API clients. Please check your API keys in Streamlit secrets. Error: {e}")
+        st.stop()
 
-    if show_retrieval and retrieved_text:
-        with st.expander("🔎 Retrieved context"):
-            st.write(retrieved_text)
+@st.cache_resource
+def get_chroma_collection():
+    """Initializes a persistent ChromaDB client and returns the collection."""
+    client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
+    return client.get_or_create_collection(name=CHROMA_COLLECTION_NAME)
 
-    system_prompt = (
-        "You are a helpful iSchool assistant. Use the retrieved context as much as possible. "
-        "If you see partial matches, still try to answer from them. "
-        "Only say 'not found' if there is truly no relevant info in the org pages."
+# ==============================================================================
+# 4. CORE LOGIC FUNCTIONS
+# ==============================================================================
+
+def extract_text_from_html(file_path):
+    """Extracts clean text content from an HTML file."""
+    try:
+        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
+            soup = BeautifulSoup(f, 'html.parser')
+            return soup.get_text(separator=" ", strip=True)
+    except Exception as e:
+        st.error(f"Error reading {os.path.basename(file_path)}: {e}")
+        return None
+
+def setup_vector_db(collection, openai_client, force_rebuild=False):
+    """Builds the vector database from HTML files using efficient batch embedding."""
+    if collection.count() > 0 and not force_rebuild:
+        st.sidebar.info(f"Vector DB contains {collection.count()} chunks.")
+        return
+
+    st.sidebar.warning("Building Vector DB. Please wait...")
+    with st.spinner("Processing files and creating embeddings..."):
+        source_files = [f for f in os.listdir(SOURCE_DIR) if f.endswith(".html")]
+        if not source_files:
+            st.sidebar.error(f"No HTML files found in '{SOURCE_DIR}'.")
+            st.stop()
+
+        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1200, chunk_overlap=200)
+        all_chunks, all_ids = [], []
+
+        for filename in source_files:
+            doc_text = extract_text_from_html(os.path.join(SOURCE_DIR, filename))
+            if doc_text:
+                chunks = text_splitter.split_text(doc_text)
+                for i, chunk in enumerate(chunks):
+                    all_chunks.append(chunk)
+                    all_ids.append(f"{filename}_chunk_{i+1}")
+
+        batch_size = 100
+        for i in range(0, len(all_chunks), batch_size):
+            batch_chunks = all_chunks[i:i + batch_size]
+            batch_ids = all_ids[i:i + batch_size]
+            try:
+                response = openai_client.embeddings.create(input=batch_chunks, model="text-embedding-3-small")
+                embeddings = [item.embedding for item in response.data]
+                collection.add(documents=batch_chunks, ids=batch_ids, embeddings=embeddings)
+            except Exception as e:
+                st.error(f"Failed to embed batch starting at index {i}: {e}")
+
+    st.sidebar.success(f"Vector DB built with {collection.count()} chunks.", icon="✅")
+
+def query_vector_db(collection, openai_client, prompt, n_results=4):
+    """Queries the database to find contextually relevant document chunks."""
+    try:
+        query_embedding = openai_client.embeddings.create(input=[prompt], model="text-embedding-3-small").data[0].embedding
+        results = collection.query(query_embeddings=[query_embedding], n_results=n_results)
+        return "\n---\n".join(results['documents'][0]) if results.get('documents') else "No relevant context found."
+    except Exception as e:
+        st.error(f"Vector DB query failed: {e}")
+        return "Error retrieving context."
+
+def get_llm_response(clients, llm_provider, model_name, prompt, context, chat_history):
+    """Generates a response from the selected Language Model."""
+    system_prompt = "You are an expert assistant. Answer the user's question based on the provided context and conversation history. If the answer is not found, state that clearly."
+    user_prompt = f"CONTEXT:\n{context}\n\nHISTORY:\n{chat_history}\n\nQUESTION:\n{prompt}"
+    
+    try:
+        with st.spinner(f"Asking {model_name}..."):
+            client = clients[llm_provider]
+            if llm_provider == "OpenAI":
+                response = client.chat.completions.create(model=model_name, messages=[{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}], max_completion_tokens=2048)
+                return response.choices[0].message.content
+            
+            elif llm_provider == "Google":
+                # UPDATED: Initialize the specific model chosen by the user
+                model_obj = client.GenerativeModel(model_name)
+                response = model_obj.generate_content(f"{system_prompt}\n\n{user_prompt}")
+                return response.text
+            
+            elif llm_provider == "Anthropic":
+                response = client.messages.create(model=model_name, system=system_prompt, messages=[{"role": "user", "content": user_prompt}], max_tokens=2048)
+                return response.content[0].text
+    except Exception as e:
+        st.error(f"Error with {llm_provider}: {e}")
+        return "Sorry, an error occurred with the AI model."
+
+# ==============================================================================
+# 5. STREAMLIT UI AND MAIN APPLICATION FLOW
+# ==============================================================================
+
+def main():
+    st.set_page_config(page_title="Multi-LLM RAG Chat", page_icon="🧠")
+    st.title("🧠 Multi-LLM RAG Chat Application")
+    st.write(f"Ask questions about documents in the '{SOURCE_DIR}' folder.")
+
+    clients = get_api_clients()
+    collection = get_chroma_collection()
+
+    # --- Sidebar UI ---
+    st.sidebar.header("Settings")
+    
+    # UPDATED: Two-step dropdown selection for provider and model
+    selected_llm_provider = st.sidebar.selectbox(
+        "Choose an LLM Provider:",
+        list(MODEL_OPTIONS.keys())
     )
+    
+    available_models = MODEL_OPTIONS[selected_llm_provider]
+    
+    selected_model = st.sidebar.selectbox(
+        "Choose a Model:",
+        available_models
+    )
+    
+    st.sidebar.markdown("---")
+    st.sidebar.header("Management")
+    if st.sidebar.button("Clear Chat History", key="clear_chat"):
+        st.session_state.messages = []
+        st.rerun()
 
-    history = trim_memory(st.session_state.messages[:-1], 5)
-    messages = build_messages(system_prompt, history, user_q, retrieved_text)
+    if st.sidebar.button("Re-Build Vector DB", key="rebuild_db"):
+        with st.spinner("Deleting existing collection and rebuilding..."):
+            try:
+                get_chroma_collection.clear()
+                chromadb.PersistentClient(path=CHROMA_DB_PATH).delete_collection(name=CHROMA_COLLECTION_NAME)
+                st.rerun()
+            except Exception as e:
+                st.sidebar.error(f"Error during rebuild: {e}")
+    
+    setup_vector_db(collection, clients["OpenAI"])
 
-    try:
-        answer = call_model(provider, model_version, messages)
-    except Exception as e:
-        st.error(f"Model call failed: {e}")
-        answer = "Sorry — the model call failed."
+    # --- Chat Interface ---
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
 
-    with st.chat_message("assistant"):
-        st.markdown(answer)
-        st.caption(f"_Answer generated by **{provider} / {model_version}**_")
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
 
-    st.session_state.messages.append({"role": "assistant", "content": answer})
-    st.session_state.messages = trim_memory(st.session_state.messages, 5)
+    if prompt := st.chat_input("Ask a question..."):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
 
-# ==============================
-# Footer
-# ==============================
-st.divider()
-st.markdown("""
-**Deployment tips:**
-- Add API keys to `.streamlit/secrets.toml`:
-""")
+        context = query_vector_db(collection, clients["OpenAI"], prompt)
+        chat_history = "\n".join([f"{msg['role']}: {msg['content']}" for msg in st.session_state.messages[-11:-1]])
+        
+        response = get_llm_response(clients, selected_llm_provider, selected_model, prompt, context, chat_history)
+        
+        full_response = f"**Answer from `{selected_model}`:**\n\n{response}"
+        st.session_state.messages.append({"role": "assistant", "content": full_response})
+        with st.chat_message("assistant"):
+            st.markdown(full_response)
+
+if __name__ == "__main__":
+    main()

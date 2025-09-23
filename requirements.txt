@@ -3,11 +3,9 @@ chromadb
 openai
 anthropic
 google-generativeai
-cohere
-mistralai
 beautifulsoup4
 tiktoken
 requests
 python-dotenv
 pysqlite3-binary
-PyMuPDF
+langchain
