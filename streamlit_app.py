@@ -33,6 +33,7 @@ st.page_link("pages/HW1.py", label="📄 HW1 — Document Q&A", icon="📄")
 st.page_link("pages/HW2.py", label="📑 HW2 — URL Summarizer", icon="📑")
 st.page_link("pages/Lab3.py", label="💬 Lab3 — Chatbot", icon="💬")
 st.page_link("pages/HW3.py", label="🧠 HW3 — Multi-Doc Chatbot", icon="🧠")
-st.page_link("pages/Lab4.py", label="📚 Lab4 — Vector DB Setup", icon="📚")  # ✅ Added Lab 4
+st.page_link("pages/lab4.py", label="📚 Lab4 — Vector DB Setup", icon="📚")
+
 
 st.divider()
