@@ -2,72 +2,107 @@ import streamlit as st
 import pysqlite3
 import sys
 sys.modules["sqlite3"] = pysqlite3
+
 import chromadb
 from chromadb.utils import embedding_functions
-import fitz  # PyMuPDF for PDF reading
+import fitz  # PyMuPDF
 import os
+from openai import OpenAI
 
-
-
-
-
-# Function to load PDFs, embed, and create Chroma collection
+# ==============================
+# Setup VectorDB
+# ==============================
 def setup_lab4_vectorDB(pdf_folder="pdfs"):
     if "Lab4_vectorDB" in st.session_state:
         return st.session_state.Lab4_vectorDB
 
-    # 1. Initialize Chroma client
     client = chromadb.Client()
 
-    # 2. Create collection
     openai_ef = embedding_functions.OpenAIEmbeddingFunction(
         api_key=st.secrets["OPENAI_API_KEY"],
         model_name="text-embedding-3-small"
     )
+
+    # ✅ safer: get or create
     collection = client.get_or_create_collection(
-    name="Lab4Collection",
-    embedding_function=openai_ef
-)
+        name="Lab4Collection",
+        embedding_function=openai_ef
+    )
 
+    # Only load if collection is empty
+    if collection.count() == 0:
+        pdf_files = [f for f in os.listdir(pdf_folder) if f.endswith(".pdf")]
 
-    # 3. Read all PDFs from folder
-    pdf_files = [f for f in os.listdir(pdf_folder) if f.endswith(".pdf")]
+        for fname in pdf_files:
+            path = os.path.join(pdf_folder, fname)
+            doc = fitz.open(path)
+            for i, page in enumerate(doc):
+                text = page.get_text().strip()
+                if text:
+                    collection.add(
+                        ids=[f"{fname}_p{i}"],
+                        documents=[text],
+                        metadatas=[{"filename": fname}]
+                    )
+            doc.close()
 
-    for fname in pdf_files:
-        full_path = os.path.join(pdf_folder, fname)
-        doc = fitz.open(full_path)
-        text_chunks = []
-        for page in doc:
-            text = page.get_text().strip()
-            if text:
-                text_chunks.append(text)
-        doc.close()
-
-        # 4. Add each page/chunk to vector DB
-        for i, chunk in enumerate(text_chunks):
-            collection.add(
-                ids=[f"{fname}_p{i}"],
-                documents=[chunk],
-                metadatas=[{"filename": fname}]
-            )
-
-    # Save in session state
     st.session_state.Lab4_vectorDB = collection
     return collection
 
+
 # ==============================
-# Lab 4 Streamlit Page
+# Streamlit Page
 # ==============================
-st.title("📚 Lab 4 – Part A: Vector Database Setup")
+st.title("💬 Lab 4b — Course Info Chatbot")
 
-# Create vector DB if not exists
-collection = setup_lab4_vectorDB("pdfs")  # make sure you have a folder 'pdfs' with 7 PDFs
+# Initialize
+collection = setup_lab4_vectorDB("pdfs")
+client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-# Test queries
-test_queries = ["Generative AI", "Text Mining", "Data Science Overview"]
+# Keep chat history
+if "messages" not in st.session_state:
+    st.session_state.messages = []
 
-for query in test_queries:
-    st.subheader(f"Results for: {query}")
-    results = collection.query(query_texts=[query], n_results=3)
-    filenames = [md["filename"] for md in results["metadatas"][0]]
-    st.write(filenames)
+# Display previous messages
+for msg in st.session_state.messages:
+    with st.chat_message(msg["role"]):
+        st.markdown(msg["content"])
+
+# User input
+if user_q := st.chat_input("Ask me about the course materials..."):
+    # Save user message
+    st.session_state.messages.append({"role": "user", "content": user_q})
+    with st.chat_message("user"):
+        st.markdown(user_q)
+
+    # 1. Retrieve from VectorDB
+    results = collection.query(query_texts=[user_q], n_results=3)
+    retrieved_chunks = [doc for doc in results["documents"][0]]
+    context_text = "\n\n".join(retrieved_chunks)
+
+    # 2. Build prompt for LLM
+    system_prompt = (
+        "You are a helpful course assistant. "
+        "Answer clearly and simply. "
+        "If you use retrieved knowledge, say: 'Based on the course PDFs...' "
+        "If not found, say: 'I don’t know from the PDFs, but here's what I think...'"
+    )
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": f"Question: {user_q}\n\nRelevant course material:\n{context_text}"}
+    ]
+
+    # 3. Call OpenAI LLM
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",  # or "gpt-5-mini" if available
+        messages=messages,
+        max_tokens=500
+    )
+
+    answer = response.choices[0].message.content
+
+    # Show assistant response
+    with st.chat_message("assistant"):
+        st.markdown(answer)
+    st.session_state.messages.append({"role": "assistant", "content": answer})

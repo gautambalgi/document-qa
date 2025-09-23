@@ -87,14 +87,7 @@ def ensure_gemini():
 # Session state
 # =========================
 if "messages" not in st.session_state:
-<<<<<<< HEAD
-   from typing import Dict, Any, cast
-
-st.session_state.docs = cast(Dict[str, Dict[str, Any]], {})
-
-=======
     st.session_state.messages: List[Dict[str, str]] = []  # whole chat history
->>>>>>> 8780780ce36f7651f44a63b5db586fd6955012ad
 if "mode" not in st.session_state:
     st.session_state.mode = "awaiting_question"  # or "offer_more_pending"
 if "last_question" not in st.session_state:
@@ -104,15 +97,8 @@ if "last_short_answer" not in st.session_state:
 if "summary" not in st.session_state:
     st.session_state.summary = ""  # rolling conversation summary (for the memory mode)
 if "docs" not in st.session_state:
-    # {"url1": {"url": str, "text": str, "summary": str, "ts": float},
-    #  "url2": {...}}
-<<<<<<< HEAD
-    from typing import List, Dict, cast
-
-st.session_state.messages = cast(List[Dict[str, str]], [])
-=======
+    # {"url1": {"url": str, "text": str, "summary": str, "ts": float}, "url2": {...}}
     st.session_state.docs: Dict[str, Dict[str, Any]] = {}
->>>>>>> 8780780ce36f7651f44a63b5db586fd6955012ad
 
 # =========================
 # Sidebar controls
@@ -214,6 +200,12 @@ def extract_relevant_passages(question: str, text: str, k: int = 3) -> List[str]
         scored.append((score, p))
     scored.sort(key=lambda x: x[0], reverse=True)
     return [p for s, p in scored[:k] if s > 0] or paras[:k]
+
+# =========================
+# LLM plumbing (unified)
+# =========================
+# ... (KEEP the rest of your code unchanged from here down)
+
 
 # =========================
 # LLM plumbing (unified)
