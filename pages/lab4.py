@@ -1,8 +1,17 @@
+import sys
+
+# Force Chroma to use pysqlite3
+try:
+    import pysqlite3
+    sys.modules["sqlite3"] = sys.modules.pop("pysqlite3")
+except ImportError:
+    pass
+
 import streamlit as st
 import os
+import fitz  # PyMuPDF
 import chromadb
 from chromadb.utils import embedding_functions
-import fitz  # from PyMuPDF
 from openai import OpenAI
 
 # ==============================
