@@ -1,29 +1,26 @@
 import streamlit as st
-import sys
-try:
-    import pysqlite3
-    sys.modules["sqlite3"] = pysqlite3
-except ImportError:
-    pass
+import os
+import fitz  # PyMuPDF
 
 import chromadb
 from chromadb.utils import embedding_functions
-import fitz  # PyMuPDF
-import os
+from chromadb.config import Settings
 
 # Vendor SDKs
 from openai import OpenAI as OpenAIClient
 import anthropic
 import google.generativeai as genai
 
+
 # ==============================
-# Setup VectorDB
+# Setup VectorDB (DuckDB backend)
 # ==============================
 def setup_lab4_vectorDB(pdf_folder="pdfs"):
     if "Lab4_vectorDB" in st.session_state:
         return st.session_state.Lab4_vectorDB
 
-    client = chromadb.Client()
+    # ✅ Use DuckDB to avoid sqlite issues on Streamlit Cloud
+    client = chromadb.Client(Settings(anonymized_telemetry=False, persist_directory=".chromadb"))
 
     openai_ef = embedding_functions.OpenAIEmbeddingFunction(
         api_key=st.secrets["OPENAI_API_KEY"],
@@ -69,7 +66,7 @@ elif vendor == "Anthropic":
 else:
     model = st.sidebar.selectbox("Model", ["gemini-1.5-flash", "gemini-1.5-pro"])
 
-# Load vector DB
+# Load VectorDB
 collection = setup_lab4_vectorDB("pdfs")
 
 # Keep chat history
@@ -87,11 +84,13 @@ if user_q := st.chat_input("Ask me about the course materials..."):
     with st.chat_message("user"):
         st.markdown(user_q)
 
-    # Retrieve from vector DB
+    # 1. Retrieve from VectorDB
     results = collection.query(query_texts=[user_q], n_results=3)
     retrieved_chunks = results["documents"][0]
+    retrieved_files = [md["filename"] for md in results["metadatas"][0]]
     context_text = "\n\n".join(retrieved_chunks)
 
+    # 2. Build system prompt
     system_prompt = (
         "You are a helpful course assistant. "
         "Answer clearly and simply. "
@@ -104,7 +103,7 @@ if user_q := st.chat_input("Ask me about the course materials..."):
         {"role": "user", "content": f"Question: {user_q}\n\nRelevant course material:\n{context_text}"}
     ]
 
-    # Choose vendor
+    # 3. Choose vendor
     answer = ""
     if vendor == "OpenAI":
         client = OpenAIClient(api_key=st.secrets["OPENAI_API_KEY"])
@@ -120,7 +119,7 @@ if user_q := st.chat_input("Ask me about the course materials..."):
         resp = model_obj.generate_content(f"{system_prompt}\n\nContext:\n{context_text}\n\nQuestion: {user_q}")
         answer = resp.text
 
-    # Show assistant response
+    # 4. Show assistant response
     with st.chat_message("assistant"):
         st.markdown(answer)
     st.session_state.messages.append({"role": "assistant", "content": answer})
