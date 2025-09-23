@@ -36,7 +36,7 @@ st.sidebar.header("⚙️ Settings")
 
 PROVIDERS = {
     "OpenAI": ["gpt-4o-mini", "gpt-4o", "gpt-4.1"],
-    "Gemini": ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.0-pro"],
+    "Gemini": ["gemini-2.0-flash", "gemini-2.0-pro", "gemini-2.0-flash-thinking-exp-01-21"],
     "Claude": ["claude-3-haiku-20240307", "claude-3-sonnet-20240229", "claude-3-opus-20240229"],
 }
 
@@ -58,6 +58,7 @@ st.sidebar.markdown(
 # Helpers
 # ==============================
 def read_html_as_text(path: str) -> str:
+    """Extract visible text from HTML file."""
     try:
         with open(path, "r", encoding="utf-8") as f:
             soup = BeautifulSoup(f, "html.parser")
@@ -72,13 +73,20 @@ def read_html_as_text(path: str) -> str:
     text = re.sub(r"\n\s*\n+", "\n\n", text)
     return text.strip()
 
-def two_chunk_split(text: str):
-    if not text:
-        return ["", ""]
-    mid = max(1, len(text) // 2)
-    return [text[:mid].strip(), text[mid:].strip()]
+def chunk_text(text: str, max_chars=1200, overlap=200):
+    """Split text into overlapping chunks for better retrieval."""
+    chunks = []
+    start = 0
+    while start < len(text):
+        end = min(len(text), start + max_chars)
+        chunk = text[start:end].strip()
+        if chunk:
+            chunks.append(chunk)
+        start += max_chars - overlap
+    return chunks if chunks else [text]
 
-def setup_vector_db(html_folder="htmls", persist_dir=".chroma_hw4"):
+def setup_vector_db(html_folder="su_orgs", persist_dir=".chroma_hw4"):
+    """Load or build vector DB from HTMLs."""
     if "HW4_vector_collection" in st.session_state:
         return st.session_state.HW4_vector_collection
 
@@ -94,17 +102,23 @@ def setup_vector_db(html_folder="htmls", persist_dir=".chroma_hw4"):
     )
 
     if collection.count() == 0:
+        if not os.path.exists(html_folder):
+            st.error(f"Folder `{html_folder}` not found.")
+            st.stop()
+
         html_files = sorted([f for f in os.listdir(html_folder) if f.lower().endswith(".html")])
+        if not html_files:
+            st.error(f"No HTML files found in `{html_folder}`.")
+            st.stop()
+
         for fname in html_files:
             path = os.path.join(html_folder, fname)
             try:
                 raw_text = read_html_as_text(path)
-                chunk_a, chunk_b = two_chunk_split(raw_text)
-                docs = [chunk_a, chunk_b]
-                ids = [f"{fname}::A", f"{fname}::B"]
-                metas = [{"filename": fname, "chunk": "A"},
-                         {"filename": fname, "chunk": "B"}]
-                collection.add(ids=ids, documents=docs, metadatas=metas)
+                chunks = chunk_text(raw_text)
+                ids = [f"{fname}::{i}" for i in range(len(chunks))]
+                metas = [{"filename": fname, "chunk": i} for i in range(len(chunks))]
+                collection.add(ids=ids, documents=chunks, metadatas=metas)
                 time.sleep(0.01)
             except Exception as e:
                 print(f"Skipping {fname}: {e}")
@@ -130,7 +144,7 @@ def build_messages(system_prompt, history, user_q, retrieved_text):
     return msgs
 
 def call_model(provider, model, messages):
-    """Dispatch to the right provider/model."""
+    """Dispatch to correct provider."""
     if provider == "OpenAI":
         client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
         resp = client.chat.completions.create(
@@ -167,7 +181,7 @@ def call_model(provider, model, messages):
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-collection = setup_vector_db("htmls", ".chroma_hw4")
+collection = setup_vector_db("su_orgs", ".chroma_hw4")
 
 # ==============================
 # Chat UI
@@ -179,17 +193,19 @@ for msg in st.session_state.messages:
 user_q = st.chat_input("Ask about iSchool student organizations…")
 
 if user_q:
-    # Save user message
+    # Save and show user message immediately
     st.session_state.messages.append({"role": "user", "content": user_q})
-
-    # Show it immediately
     with st.chat_message("user"):
         st.markdown(user_q)
 
     try:
-        results = collection.query(query_texts=[user_q], n_results=3)
-        retrieved = results.get("documents", [[]])[0] if results else []
-        retrieved_text = "\n\n---\n".join(retrieved) if retrieved else ""
+        if collection.count() == 0:
+            st.error("Vector DB is empty. Please check your su_orgs folder.")
+            retrieved_text = ""
+        else:
+            results = collection.query(query_texts=[user_q], n_results=5)
+            retrieved = results.get("documents", [[]])[0] if results else []
+            retrieved_text = "\n\n---\n".join(retrieved) if retrieved else ""
     except Exception as e:
         st.warning(f"Vector DB query failed: {e}")
         retrieved_text = ""
@@ -199,9 +215,9 @@ if user_q:
             st.write(retrieved_text)
 
     system_prompt = (
-        "You are a helpful iSchool assistant. Answer clearly and accurately. "
-        "If you used retrieved info, begin with: 'Based on the iSchool org pages…' "
-        "If nothing relevant was found, say: 'I couldn’t find this in the org pages, but…' "
+        "You are a helpful iSchool assistant. Use the retrieved context as much as possible. "
+        "If you see partial matches, still try to answer from them. "
+        "Only say 'not found' if there is truly no relevant info in the org pages."
     )
 
     history = trim_memory(st.session_state.messages[:-1], 5)
@@ -216,6 +232,7 @@ if user_q:
     with st.chat_message("assistant"):
         st.markdown(answer)
         st.caption(f"_Answer generated by **{provider} / {model_version}**_")
+
     st.session_state.messages.append({"role": "assistant", "content": answer})
     st.session_state.messages = trim_memory(st.session_state.messages, 5)
 
