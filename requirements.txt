@@ -10,3 +10,4 @@ tiktoken
 requests
 python-dotenv
 pysqlite3-binary
+PyMuPDF
