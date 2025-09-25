@@ -20,7 +20,8 @@ st.write(
     - 📑 HW2 — URL Summarizer  
     - 💬 Lab3 — Streaming Chatbot  
     - 🧠 HW3 — Multi-Doc Chatbot  
-    - 📚 Lab4 — Vector DB Setup  
+    - 📚 Lab4 — Vector DB Setup 
+    -    Lab 5 - Open weather api  
     """
 )
 
@@ -34,6 +35,6 @@ st.page_link("pages/HW2.py", label="📑 HW2 — URL Summarizer", icon="📑")
 st.page_link("pages/Lab3.py", label="💬 Lab3 — Chatbot", icon="💬")
 st.page_link("pages/HW3.py", label="🧠 HW3 — Multi-Doc Chatbot", icon="🧠")
 st.page_link("pages/lab4.py", label="📚 Lab4 — Vector DB Setup", icon="📚")
-
+st.page_link("pages/Lab5.py", label="📚 Lab5 — Vector DB Setup", icon="")
 
 st.divider()
